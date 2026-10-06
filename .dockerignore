@@ -1,0 +1,19 @@
+# Never bake secrets into an image. Keys come from `flyctl secrets set` at runtime.
+.env
+.env.*
+!.env.example
+
+node_modules
+**/node_modules
+**/dist
+web/dist
+
+# Local-only eval inputs. report.json is the EXCEPTION: the gateway serves it from disk
+# at GET /evals/report.json, so it must be inside the image.
+reports/*
+!reports/report.json
+!reports/.keep
+runs
+*.log
+.git
+.claude

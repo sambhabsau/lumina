@@ -1,0 +1,499 @@
+{
+  "assignment": "Assignment 1: LUMINA",
+  "student": "Sambhab Sau",
+  "deployedAt": "2026-09-30T00:22:03.349Z",
+  "runNotes": "Both red lines are measurement gaps, not agent behavior; see Trade-offs",
+  "design": {
+    "components": "Web UI - user's browser; Vercel web app\nGateway - publicly reachable Node process located in Fly.io, no API keys\nAgent service - private Node process reachable only from Gateway, has no URL\n  - defines what tools are available and enforces max number of turns\n  - stateless between requests, every turn is reloaded from MongoDB\nMongoDB Atlas - managed cloud service\n  - stateful and holds the full conversation history \nSearch Cache - 2-tier -> tier 1 is in the agent's memory & tier 2 is in MongoDB Atlas\nRun logs - agent writes one JSON file to Fly's local disk and a persistent copy in MongoDB\nJob Collection - deep search functionality and each row would be stateful",
+    "responsibilities": "The web UI or browser only communicates with the Gateway as it is the only component with a public address. Only the agent contains the provider keys like that of Anthropic and MongoDB. Further, the agent will decide if a request is over its cap or maximum number of turns. MongoDB is the only persistent store where messages are stored in a collection called threads. The agent is stateless between requests and must reload threads state from MongoDB with every turn. One run log is written by the agent per request. The Job Collection is designed to be a MongoDB collection polled by a worker (not built).",
+    "communication": "The Browser and Gateway communicate with each other via HTTP requests and responses for most cases. There is also SSE for gateway being able to return the state of the search happening live to the browser. The Gateway and Agent will communicate with each other via HTTP, but never over the public Internet so that the provider keys stored in the Agent are never exposed. Interestingly, communication between the Agent and MongoDB is done over the Mongo wire protocol directly so that the agent can do random-access reads/writes to thread history and the cache on every turn. When the agent is down, a thrown fetch becomes a 502 from the gateway. What hasn't been built is the job collection to and from worker which would be a Mongo collection polled by a worker, not SSE or HTTP, so that a browser is not waiting synchronously on a deep-search job.",
+    "state": "The messages are embedded into an array that is collected into threads which is stored in MongoDB authoritatively. You could delete the search cache and would only increase latency for repeated requests. Further, the agent is the only writer, and the only process that opens a Mongo connection at all.",
+    "tradeoffs": "RED-LINES explained.\nA2: The 4 runs are labelled truthfully as cap and error, never as done, and it was left in on purpose.\nR2: the test only runs if deep search exists. I didn't build deep search, and quick search has no plan_research tool anyway.\n\nFirstly, due to time constraints, I only implemented the Quick Search + Citations + Observability with honest 501s elsewhere, such as for Deep Search + RAG. \n\nSecondly, my agent used Sonnet instead of Opus exclusively for every model call. I chose the cheaper model Sonnet and accepted some quality issues with harder questions. However, as most questions will be either easy/medium, this should be a minor issue. \n\nThirdly, I designed the chunk schema around Atlas Vector Search which is just an embedding stored as another field in the document. On the other hand, a reasonable engineer may have one database for text/citations (MongoDB) and a separate one for vector (e.g. Pinecone). However, this creates overhead where every citation lookup needs both systems to agree. Further, if you write to one and forget the other, they will drift out of sync. Therefore, only Atlas Vector Search was used to avoid any syncing problem where each document only has one query for synthesizing. To note, this feature is not yet used in my project as RAG is not implemented yet. Therefore, I'm not sure if committing to this storage decision, before building the features that used it, was a good idea. Atlas's M0 cap caps me at 3 search indexes and creating chunks_text failed with error stating that maximum number of indexes had been reached with the given instance size. \n\nLastly, harness-enforced \"grounding\" was used to ensure the agent actually fetched or read a citation it uses in its final answer. The code now hard-enforces that the agent actually \"read\" a source before using it as a citation, instead of just trusting that the agent will do it autonomously. Originally, citations were added to answers without actually reading the source in about 50% of cases. This hard-coded fix causes each answer generation to become slower and pricier. Stricter grounding also means that the agent fetches more pages, which causes some runs to run out of turns."
+  },
+  "gates": [],
+  "rubric": {
+    "total": 100,
+    "awarded": 28,
+    "automated": [
+      {
+        "id": "ui_lights_up_contract",
+        "label": "UI lights up & contract",
+        "points": 10,
+        "awarded": 10,
+        "status": "pass",
+        "evidence": "✓ contract probes (401/404/400): GET /memory without X-User-Id: 401 · GET /threads/thr_nope (unknown id): 404 · POST /threads/thr_x/ask with an empty body: 400 · GET /evals/report.json without X-User-Id: 200 · ✓ sources before the first token: every answer sent its sources event before its first token · ✓ /health names model, provider, store: /health names claude-sonnet-5 · tavily · atlas-vector-search · db ok",
+        "rules": [
+          "C1"
+        ]
+      },
+      {
+        "id": "search_cited_answers",
+        "label": "Search & cited answers",
+        "points": 20,
+        "awarded": 13,
+        "status": "partial",
+        "evidence": "✗ search cache hits on repeats: search cache hit rate 7.5% on a workload that is 50% repeats",
+        "rules": [
+          "E2"
+        ]
+      },
+      {
+        "id": "memory",
+        "label": "Memory (thread + long-term)",
+        "points": 10,
+        "awarded": 0,
+        "status": "fail",
+        "evidence": "✗ save_memory lands in GET /memory: 501: 501: {\"error\":\"not implemented in this submission: GET /memory\",\"status\":501} · ✗ recall crosses into a new thread: memory phase did not complete · ✗ DELETE removes it: memory phase did not complete",
+        "rules": []
+      },
+      {
+        "id": "rag_documents",
+        "label": "RAG over documents",
+        "points": 15,
+        "awarded": 0,
+        "status": "fail",
+        "evidence": "✗ 202 accept p95 < 300ms: not measured in this run · ✗ reaches indexed via the worker: not measured in this run · ✗ citation carries a page locator: not measured in this run · ✗ mode=auto picks documents: not measured in this run · ✗ recall@5 >= 0.7: recall@5 unmeasured over 0 gold questions",
+        "rules": [
+          "E1",
+          "E2"
+        ]
+      },
+      {
+        "id": "deep_search",
+        "label": "Deep search (plan, fan-out, merged citations, spend gate)",
+        "points": 15,
+        "awarded": 0,
+        "status": "fail",
+        "evidence": "✗ plan streamed before any retrieval: no deep search completed · ✗ every step and source tagged with its sub-question: no deep search completed · ✗ deep reads more than quick: no deep search completed · ✗ deep stays inside its budget: no deep search completed · ✗ quick never escalates to plan_research (R2): not measured in this run · ✗ deep cap+1 returns 429 with resetsAt: deep cap probe failed: 501: {\"error\":\"deep search is not implemented in this submission; see DESIGN.md\",\"status\":501,\"requestId\":\"req_fcfeecd4-e7d\"}",
+        "rules": [
+          "E2",
+          "B3",
+          "R2"
+        ]
+      },
+      {
+        "id": "performance_sla",
+        "label": "Performance & SLA gate",
+        "points": 10,
+        "awarded": 0,
+        "status": "fail",
+        "evidence": "✗ bench.mjs exits 0: 13 SLA target(s) missed · ✗ the quick gear stayed in its own envelope: not measured in this run · ✗ no error-severity quality failure: quality: 2 error(s), 2 warning(s) over 63 run log(s)",
+        "rules": [
+          "B1",
+          "B2",
+          "B3",
+          "A2",
+          "A3"
+        ]
+      },
+      {
+        "id": "observability",
+        "label": "Logging, tracing & stats",
+        "points": 5,
+        "awarded": 5,
+        "status": "pass",
+        "evidence": "✓ one X-Request-Id correlates both logs: 40/40 answers returned an X-Request-Id to correlate the two logs · ✓ /stats reconciles with the run: /stats.answers=40 against 40 answers this run · ✓ every failed tool call carries an error (A1): A1: 63 run(s)",
+        "rules": [
+          "A1"
+        ]
+      }
+    ],
+    "manual": [
+      {
+        "id": "deep_search_quality",
+        "label": "Deep search quality (human half)",
+        "points": 5,
+        "awarded": 0,
+        "status": "manual",
+        "evidence": "a grader asks the same question at both depths and reads both answers. The deep one has to be BETTER, not merely longer: broader coverage, sources the quick answer missed, sub-questions a person would actually have asked, and no padding. Judged by a person, never a model",
+        "rules": [
+          "E3",
+          "P1"
+        ]
+      },
+      {
+        "id": "human_gate_answer_quality",
+        "label": "Human gate & answer quality",
+        "points": 5,
+        "awarded": 0,
+        "status": "manual",
+        "evidence": "/evals renders one successful and one failing trajectory in full, every step, with what each taught the learner; grader reads five sampled answers for concision, relevance, and honesty when retrieval is thin",
+        "rules": [
+          "P1"
+        ]
+      },
+      {
+        "id": "deploy_docs",
+        "label": "Deploy & docs",
+        "points": 5,
+        "awarded": 0,
+        "status": "manual",
+        "evidence": "UI deployed on Vercel (the submitted URL) with /evals rendering GET /evals/report.json from this run; services on Fly.io or Vercel against an Atlas cluster; agent service not publicly reachable; no key or connection string reachable from the browser; the design section (five questions) and run notes render on the page",
+        "rules": []
+      }
+    ],
+    "redLines": [
+      {
+        "check": "no fabricated citation in the bench sample (E2)",
+        "ok": true,
+        "detail": "0 citation(s) resolved to nothing retrieved in that request"
+      },
+      {
+        "check": "no run that hit a cap reported as terminated=done (A2)",
+        "ok": false,
+        "detail": "req_26e9c4ed-c55: terminated=\"cap\"; req_286427bb-4a9: terminated=\"error\"; req_b3ed4ead-344: terminated=\"cap\"; req_cb18d524-2fe: terminated=\"cap\""
+      },
+      {
+        "check": "plan_research never called from a quick search: depth is opted into, never drifted into (R2)",
+        "ok": false,
+        "detail": "not measured in this run"
+      },
+      {
+        "check": "no 2xx answer served on a provider exception (A1)",
+        "ok": true,
+        "detail": "63 run(s)"
+      }
+    ]
+  },
+  "bench": {
+    "ranAt": "2026-09-18T23:28:34.867Z",
+    "target": "https://lumina-gateway-sambhab.fly.dev",
+    "pass": false,
+    "sla": [
+      {
+        "metric": "ttft p95",
+        "target": 2500,
+        "actual": 100702,
+        "unit": "ms",
+        "comparator": "<=",
+        "pass": false
+      },
+      {
+        "metric": "answer p95",
+        "target": 12000,
+        "actual": 102318,
+        "unit": "ms",
+        "comparator": "<=",
+        "pass": false
+      },
+      {
+        "metric": "202 accept p95",
+        "target": 300,
+        "actual": null,
+        "unit": "ms",
+        "comparator": "<=",
+        "pass": false
+      },
+      {
+        "metric": "search p95 during ingest / idle",
+        "target": 1.3,
+        "actual": null,
+        "unit": "×",
+        "comparator": "<=",
+        "pass": false
+      },
+      {
+        "metric": "recall@5",
+        "target": 0.7,
+        "actual": null,
+        "unit": "",
+        "comparator": ">=",
+        "pass": false
+      },
+      {
+        "metric": "search cache hit rate",
+        "target": 50,
+        "actual": 7.5,
+        "unit": "%",
+        "comparator": ">=",
+        "pass": false
+      },
+      {
+        "metric": "deep plan p95",
+        "target": 4000,
+        "actual": null,
+        "unit": "ms",
+        "comparator": "<=",
+        "pass": false
+      },
+      {
+        "metric": "deep answer p95",
+        "target": 90,
+        "actual": null,
+        "unit": "s",
+        "comparator": "<=",
+        "pass": false
+      },
+      {
+        "metric": "deep sub-questions (min)",
+        "target": 3,
+        "actual": null,
+        "unit": "",
+        "comparator": ">=",
+        "pass": false
+      },
+      {
+        "metric": "deep/quick source ratio (min)",
+        "target": 2,
+        "actual": null,
+        "unit": "×",
+        "comparator": ">=",
+        "pass": false
+      },
+      {
+        "metric": "cost per deep answer",
+        "target": 0.35,
+        "actual": null,
+        "unit": "$",
+        "comparator": "<=",
+        "pass": false
+      },
+      {
+        "metric": "citation grounding",
+        "target": 0.95,
+        "actual": 1,
+        "unit": "",
+        "comparator": ">=",
+        "pass": true
+      },
+      {
+        "metric": "error rate",
+        "target": 0.01,
+        "actual": 0.0909,
+        "unit": "",
+        "comparator": "<=",
+        "pass": false
+      },
+      {
+        "metric": "cost per answer (quick)",
+        "target": 0.05,
+        "actual": 0.0945,
+        "unit": "$",
+        "comparator": "<=",
+        "pass": false
+      },
+      {
+        "metric": "sources before the first token",
+        "target": 1,
+        "actual": 1,
+        "unit": "",
+        "comparator": ">=",
+        "pass": true
+      },
+      {
+        "metric": "citations with no matching source",
+        "target": 0,
+        "actual": 0,
+        "unit": "",
+        "comparator": "<=",
+        "pass": true
+      }
+    ],
+    "citationGrounding": 1,
+    "recallAt5": null,
+    "retrievalRate": 1,
+    "errorRate": 0.09090909090909091,
+    "latency": {
+      "ttftP50Ms": 38622,
+      "ttftP95Ms": 100702,
+      "answerP50Ms": 45497,
+      "answerP95Ms": 102318,
+      "accept202P95Ms": null
+    },
+    "cost": {
+      "meanCostPerAnswerUsd": 0.0944839090909091,
+      "meanCostPerDeepAnswerUsd": null,
+      "declaredPriceTableUsd": 0.14972586363636364,
+      "projectedMonthlyUsd": 9448.390909090911,
+      "projectedMonthlyNoCacheUsd": 9508.390909090911
+    },
+    "searchCacheHitRatePct": 7.5,
+    "answers": 44
+  },
+  "quality": {
+    "project": "Assignment_1_Lumina",
+    "checkedAt": "2026-09-30T00:09:38.763Z",
+    "runs": 63,
+    "errors": 2,
+    "warnings": 2,
+    "results": [
+      {
+        "id": "C1",
+        "title": "Declared expectations are internally coherent",
+        "severity": "error",
+        "status": "pass",
+        "detail": "contract coherent"
+      },
+      {
+        "id": "A1",
+        "title": "Tool errors surface as errors",
+        "severity": "error",
+        "status": "pass",
+        "detail": "63 run(s)"
+      },
+      {
+        "id": "A2",
+        "title": "The loop terminates because it finished",
+        "severity": "error",
+        "status": "fail",
+        "detail": "req_26e9c4ed-c55: terminated=\"cap\"; req_286427bb-4a9: terminated=\"error\"; req_b3ed4ead-344: terminated=\"cap\"; req_cb18d524-2fe: terminated=\"cap\""
+      },
+      {
+        "id": "A3",
+        "title": "No tool thrash",
+        "severity": "warn",
+        "status": "fail",
+        "detail": "req_46cb8dc0-0d6: \"fetch_page\" called 5x consecutively (cap 4); req_56466038-942: \"fetch_page\" called 5x consecutively (cap 4)"
+      },
+      {
+        "id": "R1",
+        "title": "Required tools were actually called",
+        "severity": "error",
+        "status": "skip",
+        "detail": "none declared"
+      },
+      {
+        "id": "R2",
+        "title": "Forbidden tools were not called",
+        "severity": "error",
+        "status": "skip",
+        "detail": "none declared"
+      },
+      {
+        "id": "E1",
+        "title": "A gold set exists and is non-trivial",
+        "severity": "error",
+        "status": "pass",
+        "detail": "39 items"
+      },
+      {
+        "id": "E2",
+        "title": "Declared eval thresholds are met",
+        "severity": "error",
+        "status": "fail",
+        "detail": "recallAt5 absent from eval report; errorRate=0.0909 > 0.01"
+      },
+      {
+        "id": "E3",
+        "title": "A judge model may report, never block",
+        "severity": "warn",
+        "status": "manual",
+        "detail": "confirm no error-severity rule derives its verdict from a model"
+      },
+      {
+        "id": "B1",
+        "title": "Token budget respected",
+        "severity": "error",
+        "status": "pass",
+        "detail": "63 run(s)"
+      },
+      {
+        "id": "B2",
+        "title": "Latency budget respected",
+        "severity": "warn",
+        "status": "pass",
+        "detail": "63 run(s)"
+      },
+      {
+        "id": "B3",
+        "title": "Cost budget respected",
+        "severity": "warn",
+        "status": "pass",
+        "detail": "63 run(s)"
+      },
+      {
+        "id": "P1",
+        "title": "A human read a full trajectory",
+        "severity": "info",
+        "status": "manual",
+        "detail": "name the successful and failing trajectories you read end to end"
+      },
+      {
+        "id": "P2",
+        "title": "Every rule cites a real precedent",
+        "severity": "warn",
+        "status": "fail",
+        "detail": "10 rule(s) still lack a real precedent: C1, A2, A3, R1, R2, E1, E2, B1, B2, B3"
+      }
+    ]
+  },
+  "trajectories": {
+    "successful": {
+      "requestId": "req_f148c6fc-915",
+      "query": "What does reciprocal rank fusion do?",
+      "terminated": "done",
+      "steps": [
+        {
+          "step": 1,
+          "tool": "web_search",
+          "ok": true
+        },
+        {
+          "step": 2,
+          "tool": "fetch_page",
+          "ok": true
+        },
+        {
+          "step": 3,
+          "tool": "fetch_page",
+          "ok": true
+        }
+      ],
+      "notes": "The agent searched the web once, read two pages, terminated the loop after deciding these tool calls were enough, and answered with citations. It was fast due to it being a cached search. However, it also cost more than the $0.05 target."
+    },
+    "failing": {
+      "requestId": "req_1ac7685f-7c9",
+      "terminated": "cap",
+      "steps": [
+        {
+          "step": 1,
+          "tool": "web_search",
+          "ok": false,
+          "error": "tavily 401: {\n    \"detail\": {\n        \"error\": \"Unauthorized: missing or invalid API key.\"\n    }\n}\n"
+        },
+        {
+          "step": 2,
+          "tool": "web_search",
+          "ok": false,
+          "error": "tavily 401: {\n    \"detail\": {\n        \"error\": \"Unauthorized: missing or invalid API key.\"\n    }\n}\n"
+        },
+        {
+          "step": 3,
+          "tool": "web_search",
+          "ok": false,
+          "error": "tavily 401: {\n    \"detail\": {\n        \"error\": \"Unauthorized: missing or invalid API key.\"\n    }\n}\n"
+        },
+        {
+          "step": 4,
+          "tool": "web_search",
+          "ok": false,
+          "error": "tavily 401: {\n    \"detail\": {\n        \"error\": \"Unauthorized: missing or invalid API key.\"\n    }\n}\n"
+        },
+        {
+          "step": 5,
+          "tool": "web_search",
+          "ok": false,
+          "error": "tavily 401: {\n    \"detail\": {\n        \"error\": \"Unauthorized: missing or invalid API key.\"\n    }\n}\n"
+        },
+        {
+          "step": 6,
+          "tool": "fetch_page",
+          "ok": true
+        },
+        {
+          "step": 7,
+          "tool": "web_search",
+          "ok": false,
+          "error": "tavily 401: {\n    \"detail\": {\n        \"error\": \"Unauthorized: missing or invalid API key.\"\n    }\n}\n"
+        },
+        {
+          "step": 8,
+          "tool": "web_search",
+          "ok": false,
+          "error": "tavily 401: {\n    \"detail\": {\n        \"error\": \"Unauthorized: missing or invalid API key.\"\n    }\n}\n"
+        }
+      ],
+      "notes": "The agent searched 7 times, reaching its turn cap, due to retrying with the wrong API key. The one page it ended up fetching had to be a URL the model knew from its own training, since every search failed. Lesson: the harness should stop on an auth error instead of having the model keep retrying automatically."
+    }
+  }
+}

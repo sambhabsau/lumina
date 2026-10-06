@@ -1,0 +1,32 @@
+# LUMINA gateway on Fly.io. The ONLY service with a public address.
+#
+# >>> CHANGE `app`, and make AGENT_URL match your agent app's name exactly.
+app = "lumina-gateway-sambhab"
+primary_region = "iad"
+
+[build]
+  dockerfile = "backend/gateway/Dockerfile"
+
+[http_service]
+  internal_port = 8787
+  force_https = true
+  auto_start_machines = true
+  # Deliberately NOT stopping machines. SUBMISSION.md: "Your app must be up when it is
+  # graded... a sleeping or broken deploy scores what it shows." A cold start that times
+  # out a grader's first request is a self-inflicted zero.
+  auto_stop_machines = "off"
+  min_machines_running = 1
+
+[env]
+  PORT_GATEWAY = "8787"
+  LOG_LEVEL = "info"
+  # Private 6PN address of the agent. Not a public hostname, and that is the point.
+  AGENT_URL = "http://lumina-agent-sambhab.internal:8000"
+  CORS_ORIGINS = "http://localhost:5173,https://lumina-xi-sage-58.vercel.app"
+
+# This process reads no provider key. It does need nothing secret at all - but if you ever
+# add one: flyctl secrets set KEY=value -a <app>
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

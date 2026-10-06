@@ -1,0 +1,13 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "npm ci",
+  "buildCommand": "npm run build -w @lumina/contract && npm run build -w @lumina/web",
+  "outputDirectory": "web/dist",
+  "rewrites": [
+    {
+      "source": "/evals/report.json",
+      "destination": "https://lumina-gateway-sambhab.fly.dev/evals/report.json"
+    },
+    { "source": "/((?!assets/).*)", "destination": "/index.html" }
+  ]
+}

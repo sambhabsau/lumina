@@ -1,0 +1,39 @@
+# LUMINA agent service on Fly.io.
+#
+# >>> CHANGE `app` BELOW. Fly app names are globally unique, and this name must match the
+# >>> AGENT_URL in fly.gateway.toml exactly.
+app = "lumina-agent-sambhab"
+primary_region = "iad"
+
+[build]
+  dockerfile = "backend/agent/Dockerfile"
+
+# ---------------------------------------------------------------------------------------
+# THE RED LINE LIVES HERE, AND IT IS AN ABSENCE.
+#
+# There is deliberately NO [http_service] and NO [[services]] block, and this app must
+# never be given a public IP. That is what keeps the only process holding provider keys
+# off the internet. SUBMISSION.md: "a service that holds keys or enforces a spend cap must
+# not be reachable from the internet, because a cap that can be bypassed by calling the
+# service directly is not a cap. That is a red line, not a preference."
+#
+# With no services block, the app is still reachable from your other Fly apps over the
+# private 6PN network at http://<app-name>.internal:8000 - which is exactly what the
+# gateway uses, and nothing else can.
+#
+# VERIFY AFTER DEPLOY (both must be true):
+#   flyctl ips list -a lumina-agent-sambhab     -> must list NO public v4/v6 address
+#   curl https://lumina-agent-sambhab.fly.dev/health  -> must NOT resolve or connect
+# If Fly allocated an IP anyway: flyctl ips release <address> -a lumina-agent-sambhab
+# ---------------------------------------------------------------------------------------
+
+[env]
+  PORT_AGENT = "8000"
+  LOG_LEVEL = "info"
+
+# Secrets are NEVER listed here - this file is committed. Set them with:
+#   flyctl secrets set ANTHROPIC_API_KEY=... TAVILY_API_KEY=... MONGODB_URI=... -a <app>
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

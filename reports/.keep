@@ -1,0 +1,2 @@
+Keeps reports/ in git and in the Docker build context so the gateway image always has
+the directory, even before the first report exists. See backend/gateway/Dockerfile.

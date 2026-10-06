@@ -1,0 +1,19 @@
+node_modules/
+dist/
+web/dist/
+.env
+.env.*
+!.env.example
+runs/
+# reports/* (not reports/) so the negation below can work: git cannot re-include a
+# file whose PARENT DIRECTORY is excluded. report.json is tracked on purpose - the
+# gateway serves it from disk at GET /evals/report.json, so it must ship with the
+# deploy. bench/quality/eval json stay local: they are inputs, not the submission.
+reports/*
+!reports/report.json
+!reports/.keep
+*.log
+.DS_Store
+.vercel
+.env*
+!.env.example
