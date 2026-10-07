@@ -88,5 +88,5 @@ stubs I built the services from) come from the
 Hamza Farooq. The UI, contract, and harness aren't included in this repo.
 
 My work: the agent and gateway implementations in `backend/`, the deployment setup
-(Dockerfiles, `fly.*.toml`, `vercel.json`, [`DEPLOY.md`](DEPLOY.md)), and the design write-ups
-([`DESIGN.md`](DESIGN.md), [`DESIGN-QUESTIONS.md`](DESIGN-QUESTIONS.md)).
+(Dockerfiles, `fly.*.toml`, `vercel.json`, [`DEPLOY.md`](DEPLOY.md)), and the design write-up
+([`DESIGN.md`](DESIGN.md)).
